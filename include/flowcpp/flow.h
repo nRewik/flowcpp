@@ -6,4 +6,4 @@
 #include "disposable.hpp"
 #include "middleware.hpp"
 #include "store.hpp"
-
+#include "thunk_middleware.hpp"
