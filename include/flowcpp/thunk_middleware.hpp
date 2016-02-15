@@ -12,7 +12,7 @@ auto thunk_middleware = [](flow::basic_middleware<State> middleware) {
       auto type = *static_cast<const ActionType*>(action.type());
       if (type == ActionType::thunk) {
         auto payload = *static_cast<const Thunk<State>*>(action.payload());
-        payload(dispatch, middleware.get_state());
+        payload(dispatch, [=](){ return middleware.get_state(); });
       }
       return dispatch(action);
     };

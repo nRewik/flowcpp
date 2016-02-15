@@ -28,7 +28,7 @@ class basic_middleware {
 
   std::function<action_t(action_t)> dispatch() const { return _p->dispatch(); }
 
-  std::function<state_t()> get_state() const { return _p->get_state(); }
+  state_t get_state() const { return _p->get_state()(); }
 
   state_t state() const { return _p->get_state()(); }
 

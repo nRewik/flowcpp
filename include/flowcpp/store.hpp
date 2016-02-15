@@ -39,7 +39,7 @@ class basic_store {
     return _p->subscribe()(subscriber);
   }
 
-  std::function<state_t()> get_state() const { return _p->get_state(); }
+  state_t get_state() const { return _p->get_state()(); }
 
   dispatch_t dispatch() const { return _p->dispatch(); }
 

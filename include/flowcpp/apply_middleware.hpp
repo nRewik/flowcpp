@@ -40,7 +40,7 @@ store_enhancer_t<State> apply_middleware(
       auto store = next(reducer, state);
 
       auto middleware = basic_middleware<state_t>(
-          middleware_holder{store.dispatch(), store.get_state()});
+          middleware_holder{store.dispatch(), [=](){ return store.get_state(); }});
 
       std::vector<dispatch_transformer_t> chain;
       std::transform(begin(transformers), end(transformers),
@@ -52,7 +52,7 @@ store_enhancer_t<State> apply_middleware(
           [](dispatch_t arg, auto f) { return f(arg); });
 
       return basic_store<state_t>(
-          store_holder{new_dispatch, store.subscribe(), store.get_state()});
+          store_holder{new_dispatch, store.subscribe(), [=](){ return store.get_state(); }});
     };
   };
 }
