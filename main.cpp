@@ -79,11 +79,41 @@ auto logging_middleware = [](flow::basic_middleware<counter_state>) {
   };
 };
 
+// //
+// template <class S, class T>
+// using selector_t = std::function<T(S)>;
+
+// // template <class T, class ... S>
+// // using selector_t = std::function<T(S...)>;
+
+// auto counter_selector = selector_t<int, counter_state>{
+//   [](auto state){ return state._counter; }
+// };
+
+// template <class T, class ... S>
+// selector_t<S,T>
+// auto create_selector_creator = [](){
+//   return []( std::vector<std::function<void(selector_t)>>){
+
+//   }
+// }
+
+//(x1->y1, x2->y2) -> ((x1->x2) -> (y1, y2))
+template <class X1, class Y1, class X2, class Y2>
+auto invert( std::function<Y1(X1)> a, std::function<Y2(X2)> b){
+  return [=](X1 x1){
+    return [=](X2 x2){
+      return std::pair<Y1,Y2>{a(x1),b(x2)};
+    };
+  };
+};
+
+
+
 void simple_example() {
   std::cout << "Start: Simple example" << std::endl;
 
   auto store = flow::create_store_with_action<counter_state>(reducer, counter_state{}, increment_action{5});
-
   auto disposable = store.subscribe([](counter_state state) { std::cout << state.to_string() << std::endl; });
 
   store.dispatch(increment_action{2});
@@ -121,6 +151,6 @@ void thunk_middleware_example() {
 int main() {
   simple_example();
   std::cout << "------------------------------" << std::endl;
-  thunk_middleware_example();
+  // thunk_middleware_example();
   return 0;
 }
