@@ -79,35 +79,114 @@ auto logging_middleware = [](flow::basic_middleware<counter_state>) {
   };
 };
 
-// //
-// template <class S, class T>
-// using selector_t = std::function<T(S)>;
 
-// // template <class T, class ... S>
-// // using selector_t = std::function<T(S...)>;
+//
+using args_t = std::vector<flow::any>;
+using func_t = std::function<flow::any(args_t)>;
+using selector_t = std::function<flow::any(flow::any, args_t)>;
 
-// auto counter_selector = selector_t<int, counter_state>{
-//   [](auto state){ return state._counter; }
-// };
+//
+auto defaultMemoize = [](func_t func){
 
-// template <class T, class ... S>
-// selector_t<S,T>
-// auto create_selector_creator = [](){
-//   return []( std::vector<std::function<void(selector_t)>>){
+  std::vector<flow::any> *last_args = new std::vector<flow::any>();
+  flow::any *last_result = new flow::any(); 
 
-//   }
-// }
+  return [last_args = last_args, last_result = last_result, func = func](args_t args) -> flow::any{
 
-//(x1->y1, x2->y2) -> ((x1->x2) -> (y1, y2))
-template <class X1, class Y1, class X2, class Y2>
-auto invert( std::function<Y1(X1)> a, std::function<Y2(X2)> b){
-  return [=](X1 x1){
-    return [=](X2 x2){
-      return std::pair<Y1,Y2>{a(x1),b(x2)};
-    };
+    std::cout << "last_args.size() = "<< last_args->size() << "\t new_args.size() = " << args.size() << "\n";
+    std::cout << "last_result = " << *last_result << "\n";
+
+    // Mark
+    if ( last_args->size() == args.size() &&
+          std::equal(last_args->begin(), last_args->begin() + last_args->size(), args.begin())
+    ){
+      return *last_result;
+    }
+
+    // Mark
+    auto new_result = func(args);
+
+    *last_args = args;
+    *last_result = new_result;
+
+    std::cout << "new_args = " << args.size() << "\n";
+    std::cout << "new_result = " << new_result.as<int>() << "\n";
+
+    return *last_result;
   };
 };
 
+
+// template <class T, class ... S>
+// selector_t<flow::any, flow::any, flow::any>
+auto create_selector_creator( std::vector<selector_t> selectors, func_t func) -> selector_t{
+
+  auto memoizedResultFunc = defaultMemoize([func = func](args_t args){
+    std::cout << "recompute" << std::endl;
+    return func(args);
+  });
+
+  auto selector = selector_t{ 
+    [memoizedResultFunc = memoizedResultFunc, selectors = selectors](auto state, auto args){
+      std::vector<flow::any> params;
+      for (const auto selector: selectors) {
+        auto param = selector(state, args);
+        params.push_back(param);
+      }      
+      return memoizedResultFunc(params);
+  }};
+
+  return selector;
+};
+
+
+void selector_example() {
+  std::cout << "Start: Selector example" << std::endl;
+
+  struct SubState{
+    int sub_id;
+  };
+
+  struct RootState{
+    int id;
+    SubState sub_state;
+  };
+
+  auto id_selector = selector_t{
+    [](flow::any state, auto args){
+      return state.as<RootState>().id;
+    }};
+
+  auto sub_id_selector = selector_t{
+    [](flow::any state, auto args){
+      return state.as<RootState>().sub_state.sub_id;
+    }};
+
+  auto func = func_t{
+    [](std::vector<flow::any> params){
+      auto id = params.at(0).as<int>();
+      auto sub_id = params.at(1).as<int>();
+      return id * sub_id;
+    }};
+
+  auto root_state = RootState();
+  root_state.id = 2;
+  root_state.sub_state.sub_id = 4;
+
+
+  auto multiply_selector = create_selector_creator({id_selector,sub_id_selector}, func);
+  auto x = multiply_selector(root_state, {});
+  std::cout << x.as<int>() << std::endl;
+
+  root_state.sub_state.sub_id = 5;
+  auto y = multiply_selector(root_state, {});
+  std::cout << y.as<int>() << std::endl;
+
+  root_state.sub_state.sub_id = 5;
+  auto z = multiply_selector(root_state, {});
+  std::cout << z.as<int>() << std::endl;
+
+}
 
 
 void simple_example() {
@@ -149,7 +228,8 @@ void thunk_middleware_example() {
 }
 
 int main() {
-  simple_example();
+  selector_example();
+  // simple_example();
   std::cout << "------------------------------" << std::endl;
   // thunk_middleware_example();
   return 0;
