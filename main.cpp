@@ -84,47 +84,57 @@ auto logging_middleware = [](flow::basic_middleware<counter_state>) {
 using args_t = std::vector<flow::any>;
 using func_t = std::function<flow::any(args_t)>;
 using selector_t = std::function<flow::any(flow::any, args_t)>;
+using equality_check_t = std::function<bool(flow::any, flow::any)>;
 
 //
-auto defaultMemoize = [](func_t func){
+auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_checks){
 
+  // TODO: Should be disposable.
+  // FIXME: Don't use new.
   std::vector<flow::any> *last_args = new std::vector<flow::any>();
   flow::any *last_result = new flow::any(); 
 
-  return [last_args = last_args, last_result = last_result, func = func](args_t args) -> flow::any{
+  return [last_args = last_args, last_result = last_result, func = func, equality_checks = equality_checks]
+  (args_t args) -> flow::any{
 
-    std::cout << "last_args.size() = "<< last_args->size() << "\t new_args.size() = " << args.size() << "\n";
-    std::cout << "last_result = " << *last_result << "\n";
+    if ( last_args->size() == args.size() ){
 
-    // Mark
-    if ( last_args->size() == args.size() &&
-          std::equal(last_args->begin(), last_args->begin() + last_args->size(), args.begin())
-    ){
-      return *last_result;
+      if (args.size() != equality_checks.size()){
+        throw std::runtime_error("Size of args and equility_checks are mismatch.");
+      }
+
+      auto all_args_are_equal = true;
+      for(int i = 0; i < args.size(); i++){
+        auto arg_equal = equality_checks[i]( args[i], (*last_args)[i] );
+        if (!arg_equal){ 
+          all_args_are_equal = false; 
+          break; 
+        }
+      }
+
+      if (all_args_are_equal){ 
+        std::cout << "use cache" << "\n";
+        return *last_result; 
+      }
     }
 
-    // Mark
     auto new_result = func(args);
 
     *last_args = args;
     *last_result = new_result;
-
-    std::cout << "new_args = " << args.size() << "\n";
-    std::cout << "new_result = " << new_result.as<int>() << "\n";
-
     return *last_result;
   };
 };
 
+auto create_selector_creator( std::vector<selector_t> selectors, func_t func, std::vector<equality_check_t> equality_checks) -> selector_t{
 
-// template <class T, class ... S>
-// selector_t<flow::any, flow::any, flow::any>
-auto create_selector_creator( std::vector<selector_t> selectors, func_t func) -> selector_t{
-
-  auto memoizedResultFunc = defaultMemoize([func = func](args_t args){
-    std::cout << "recompute" << std::endl;
-    return func(args);
-  });
+  auto memoizedResultFunc = defaultMemoize(
+    [func = func](args_t args){
+      std::cout << "recompute" << std::endl;
+      return func(args);
+    }, 
+    equality_checks
+  );
 
   auto selector = selector_t{ 
     [memoizedResultFunc = memoizedResultFunc, selectors = selectors](auto state, auto args){
@@ -140,7 +150,7 @@ auto create_selector_creator( std::vector<selector_t> selectors, func_t func) ->
 };
 
 
-void selector_example() {
+void reselect_example() {
   std::cout << "Start: Selector example" << std::endl;
 
   struct SubState{
@@ -169,12 +179,16 @@ void selector_example() {
       return id * sub_id;
     }};
 
+  auto int_equals = equality_check_t{ [](flow::any left, flow::any right){
+    return left.as<int>() == right.as<int>();
+  }};
+  auto equality_checks = std::vector<equality_check_t>{int_equals, int_equals};
+
   auto root_state = RootState();
   root_state.id = 2;
   root_state.sub_state.sub_id = 4;
 
-
-  auto multiply_selector = create_selector_creator({id_selector,sub_id_selector}, func);
+  auto multiply_selector = create_selector_creator({id_selector,sub_id_selector}, func, equality_checks);
   auto x = multiply_selector(root_state, {});
   std::cout << x.as<int>() << std::endl;
 
@@ -186,6 +200,20 @@ void selector_example() {
   auto z = multiply_selector(root_state, {});
   std::cout << z.as<int>() << std::endl;
 
+  root_state.id = 10;
+  auto a = multiply_selector(root_state, {});
+  std::cout << a.as<int>() << std::endl;
+
+  auto b = multiply_selector(root_state, {});
+  std::cout << b.as<int>() << std::endl;
+
+  root_state.id = 10;
+  auto c = multiply_selector(root_state, {});
+  std::cout << c.as<int>() << std::endl;
+
+  root_state.sub_state.sub_id = 4;
+  auto d = multiply_selector(root_state, {});
+  std::cout << d.as<int>() << std::endl;
 }
 
 
@@ -228,7 +256,7 @@ void thunk_middleware_example() {
 }
 
 int main() {
-  selector_example();
+  reselect_example();
   // simple_example();
   std::cout << "------------------------------" << std::endl;
   // thunk_middleware_example();
