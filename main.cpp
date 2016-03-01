@@ -88,11 +88,9 @@ using equality_check_t = std::function<bool(flow::any, flow::any)>;
 
 //
 auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_checks){
-
-  // TODO: Should be disposable.
-  // FIXME: Don't use new.
-  std::vector<flow::any> *last_args = new std::vector<flow::any>();
-  flow::any *last_result = new flow::any(); 
+  
+  auto last_args = std::make_shared<std::vector<flow::any>>(std::vector<flow::any>());
+  auto last_result = std::make_shared<flow::any>(flow::any()); 
 
   return [last_args = last_args, last_result = last_result, func = func, equality_checks = equality_checks]
   (args_t args) -> flow::any{
