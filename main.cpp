@@ -3,6 +3,8 @@
 
 #include <flowcpp/flow.h>
 
+#define RESELECT_DEBUG 1
+
 enum class counter_action_type {
   thunk,
   increment,
@@ -83,68 +85,102 @@ auto logging_middleware = [](flow::basic_middleware<counter_state>) {
 //
 using args_t = std::vector<flow::any>;
 using func_t = std::function<flow::any(args_t)>;
-using selector_t = std::function<flow::any(flow::any, args_t)>;
-using equality_check_t = std::function<bool(flow::any, flow::any)>;
+using selector_t = std::function<flow::any(flow::any)>;
+using selector_creator_t = std::function<selector_t(std::vector<selector_t>, func_t)>;
+using memoize_func_t = std::function<flow::any(args_t)>;
+
 
 //
-auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_checks){
+using equality_check_t = std::function<bool(flow::any, flow::any)>;
+auto default_memoize = [](std::vector<equality_check_t> equality_checks){
+  return [=](func_t func){
+    auto last_args = std::vector<flow::any>();
+    auto last_result = flow::any(); 
 
-  auto last_args = std::vector<flow::any>();
-  auto last_result = flow::any(); 
+    return [=](args_t args) mutable -> flow::any{
+      if ( last_args.size() == args.size() ){
+        if (args.size() != equality_checks.size()){
+          throw std::runtime_error("Default Memoize Error: size of args and equility_checks are mismatch.");
+        }
 
-  return [=](args_t args) mutable -> flow::any{
+        auto all_args_are_equal = true;
+        for(int i = 0; i < args.size(); i++){
+          auto arg_equal = equality_checks[i]( args[i], last_args[i] );
+          if (!arg_equal){ 
+            all_args_are_equal = false; 
+            break; 
+          }
+        }
 
-    if ( last_args.size() == args.size() ){
-
-      if (args.size() != equality_checks.size()){
-        throw std::runtime_error("Size of args and equility_checks are mismatch.");
-      }
-
-      auto all_args_are_equal = true;
-      for(int i = 0; i < args.size(); i++){
-        auto arg_equal = equality_checks[i]( args[i], last_args[i] );
-        if (!arg_equal){ 
-          all_args_are_equal = false; 
-          break; 
+        if (all_args_are_equal){ 
+          std::cout << "use cache" << "\n";
+          return last_result; 
         }
       }
 
-      if (all_args_are_equal){ 
-        std::cout << "use cache" << "\n";
-        return last_result; 
-      }
-    }
-
-    auto new_result = func(args);
-
-    last_args = args;
-    last_result = new_result;
-    return last_result;
+      auto new_result = func(args);
+      last_args = args;
+      last_result = new_result;
+      return last_result;
+    };
   };
 };
 
-auto create_selector_creator( std::vector<selector_t> selectors, func_t func, std::vector<equality_check_t> equality_checks) -> selector_t{
+using map_key_t = std::function<std::string(flow::any)>;
+auto map_memoize = [](std::vector<map_key_t> keys){
+  return [=](func_t func){
+    auto result_map = std::unordered_map<std::string, flow::any>{};
+    return [=](args_t args) mutable -> flow::any{
 
-  auto memoizedResultFunc = defaultMemoize(
+      if (args.size() != keys.size()){
+          throw std::runtime_error("Map Memoize Error: size of args and keys are mismatch.");
+      }
+
+      auto key = std::string();
+      for(int i = 0; i < args.size(); i++){
+        key = key + keys[i](args[i]);
+      }
+
+      if (result_map.find(key) != result_map.end()){
+#ifdef RESELECT_DEBUG
+        std::cout << "use cache" << "\n";        
+#endif
+        return result_map[key];
+      }
+
+      auto new_result = func(args);
+      result_map[key] = new_result;
+      return new_result;
+    };
+  };
+};
+
+auto create_selector_creator(memoize_func_t memoized_result_func) -> selector_creator_t{
+  return [=](auto selectors, auto func){
+    return [=](auto state){
+        std::vector<flow::any> params;
+        for (const auto selector: selectors) {
+          auto param = selector(state);
+          params.push_back(param);
+        }      
+        return memoized_result_func(params);
+    };
+  };
+};
+
+auto create_selector(std::vector<selector_t> selectors, func_t func, std::function<memoize_func_t(func_t)> memoize) -> selector_t{
+
+#ifdef RESELECT_DEBUG
+  auto memoized_result_func = memoize(
     [func = func](args_t args){
       std::cout << "recompute" << std::endl;
       return func(args);
-    }, 
-    equality_checks
-  );
-
-  auto selector = selector_t{ 
-    [memoizedResultFunc = memoizedResultFunc, selectors = selectors](auto state, auto args) mutable{
-      std::vector<flow::any> params;
-      for (const auto selector: selectors) {
-        auto param = selector(state, args);
-        params.push_back(param);
-      }      
-      return memoizedResultFunc(params);
-  }};
-
-  return selector;
-};
+    });
+#else
+  auto memoized_result_func = memoize(func);
+#endif
+  return create_selector_creator(memoized_result_func)(selectors, func);
+}
 
 
 void reselect_example() {
@@ -160,12 +196,12 @@ void reselect_example() {
   };
 
   auto id_selector = selector_t{
-    [](flow::any state, auto args){
+    [](flow::any state){
       return state.as<RootState>().id;
     }};
 
   auto sub_id_selector = selector_t{
-    [](flow::any state, auto args){
+    [](flow::any state){
       return state.as<RootState>().sub_state.sub_id;
     }};
 
@@ -176,42 +212,48 @@ void reselect_example() {
       return id * sub_id;
     }};
 
-  auto int_equals = equality_check_t{ [](flow::any left, flow::any right){
-    return left.as<int>() == right.as<int>();
-  }};
-  auto equality_checks = std::vector<equality_check_t>{int_equals, int_equals};
-
   auto root_state = RootState();
   root_state.id = 2;
   root_state.sub_state.sub_id = 4;
 
-  auto multiply_selector = create_selector_creator({id_selector,sub_id_selector}, func, equality_checks);
-  auto x = multiply_selector(root_state, {});
-  std::cout << x.as<int>() << std::endl;
+  /* default memoize
+  auto int_equals = equality_check_t{ [](flow::any left, flow::any right){
+    return left.as<int>() == right.as<int>();
+  }};
+  auto equality_checks = std::vector<equality_check_t>{int_equals, int_equals};
+  auto multiply_selector = create_selector({id_selector,sub_id_selector}, func, default_memoize(equality_checks));
+  */
+
+  ///* map memoize
+  auto int_key = map_key_t{ [](flow::any x){
+    return std::to_string(x.as<int>());
+  }};
+  auto keys = std::vector<map_key_t>{int_key, int_key};
+  auto multiply_selector = create_selector({id_selector,sub_id_selector}, func, map_memoize(keys));
+  //*/
+
+  auto result_1 = multiply_selector(root_state);
+  std::cout << result_1.as<int>() << std::endl;
 
   root_state.sub_state.sub_id = 5;
-  auto y = multiply_selector(root_state, {});
-  std::cout << y.as<int>() << std::endl;
+  auto result_2 = multiply_selector(root_state);
+  std::cout << result_2.as<int>() << std::endl;
 
   root_state.sub_state.sub_id = 5;
-  auto z = multiply_selector(root_state, {});
-  std::cout << z.as<int>() << std::endl;
+  auto result_3 = multiply_selector(root_state);
+  std::cout << result_3.as<int>() << std::endl;
 
   root_state.id = 10;
-  auto a = multiply_selector(root_state, {});
-  std::cout << a.as<int>() << std::endl;
+  auto result_4 = multiply_selector(root_state);
+  std::cout << result_4.as<int>() << std::endl;
 
-  auto b = multiply_selector(root_state, {});
-  std::cout << b.as<int>() << std::endl;
-
-  root_state.id = 10;
-  auto c = multiply_selector(root_state, {});
-  std::cout << c.as<int>() << std::endl;
+  auto result_5 = multiply_selector(root_state);
+  std::cout << result_5.as<int>() << std::endl;
 
   root_state.id = 2;
   root_state.sub_state.sub_id = 4;
-  auto d = multiply_selector(root_state, {});
-  std::cout << d.as<int>() << std::endl;
+  auto result_6 = multiply_selector(root_state);
+  std::cout << result_6.as<int>() << std::endl;
 }
 
 
@@ -254,10 +296,10 @@ void thunk_middleware_example() {
 }
 
 int main() {
-  // simple_example();
-  // std::cout << "------------------------------" << std::endl;
-  // thunk_middleware_example();
-  // std::cout << "------------------------------" << std::endl;
+  simple_example();
+  std::cout << "------------------------------" << std::endl;
+  thunk_middleware_example();
+  std::cout << "------------------------------" << std::endl;
   reselect_example();
   return 0;
 }
