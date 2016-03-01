@@ -88,14 +88,13 @@ using equality_check_t = std::function<bool(flow::any, flow::any)>;
 
 //
 auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_checks){
-  
-  auto last_args = std::make_shared<std::vector<flow::any>>(std::vector<flow::any>());
-  auto last_result = std::make_shared<flow::any>(flow::any()); 
 
-  return [last_args = last_args, last_result = last_result, func = func, equality_checks = equality_checks]
-  (args_t args) -> flow::any{
+  auto last_args = std::vector<flow::any>();
+  auto last_result = flow::any(); 
 
-    if ( last_args->size() == args.size() ){
+  return [=](args_t args) mutable -> flow::any{
+
+    if ( last_args.size() == args.size() ){
 
       if (args.size() != equality_checks.size()){
         throw std::runtime_error("Size of args and equility_checks are mismatch.");
@@ -103,7 +102,7 @@ auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_che
 
       auto all_args_are_equal = true;
       for(int i = 0; i < args.size(); i++){
-        auto arg_equal = equality_checks[i]( args[i], (*last_args)[i] );
+        auto arg_equal = equality_checks[i]( args[i], last_args[i] );
         if (!arg_equal){ 
           all_args_are_equal = false; 
           break; 
@@ -112,15 +111,15 @@ auto defaultMemoize = [](func_t func, std::vector<equality_check_t> equality_che
 
       if (all_args_are_equal){ 
         std::cout << "use cache" << "\n";
-        return *last_result; 
+        return last_result; 
       }
     }
 
     auto new_result = func(args);
 
-    *last_args = args;
-    *last_result = new_result;
-    return *last_result;
+    last_args = args;
+    last_result = new_result;
+    return last_result;
   };
 };
 
@@ -135,7 +134,7 @@ auto create_selector_creator( std::vector<selector_t> selectors, func_t func, st
   );
 
   auto selector = selector_t{ 
-    [memoizedResultFunc = memoizedResultFunc, selectors = selectors](auto state, auto args){
+    [memoizedResultFunc = memoizedResultFunc, selectors = selectors](auto state, auto args) mutable{
       std::vector<flow::any> params;
       for (const auto selector: selectors) {
         auto param = selector(state, args);
@@ -209,6 +208,7 @@ void reselect_example() {
   auto c = multiply_selector(root_state, {});
   std::cout << c.as<int>() << std::endl;
 
+  root_state.id = 2;
   root_state.sub_state.sub_id = 4;
   auto d = multiply_selector(root_state, {});
   std::cout << d.as<int>() << std::endl;
@@ -254,9 +254,10 @@ void thunk_middleware_example() {
 }
 
 int main() {
-  reselect_example();
   // simple_example();
-  std::cout << "------------------------------" << std::endl;
+  // std::cout << "------------------------------" << std::endl;
   // thunk_middleware_example();
+  // std::cout << "------------------------------" << std::endl;
+  reselect_example();
   return 0;
 }
